@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Scoring de compétition de parapente à partir de traces IGC, entièrement dans le navigateur."
+    />
+    <title>ThermalKing</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="wrap hero-inner">
+        <h1>ThermalKing</h1>
+        <p class="lead">Qui c'est que c'est qui est le plus haut ?</p>
+      </div>
+    </header>
+
+    <main class="wrap">
+      <form id="score-form" novalidate>
+        <section class="card" aria-labelledby="files-title">
+          <div class="card-heading">
+            <span class="step" aria-hidden="true">1</span>
+            <div>
+              <h2 id="files-title">Traces de vol</h2>
+              <p class="hint">Un fichier IGC = un vol. Les vols d'un même pilote sont fusionnés.</p>
+            </div>
+          </div>
+
+          <div id="drop-zone" class="drop-zone">
+            <input id="file-input" type="file" accept=".igc,.IGC" multiple hidden />
+            <div class="drop-icon" aria-hidden="true">↥</div>
+            <p class="drop-title">Glissez-déposez vos fichiers IGC ici</p>
+            <p class="drop-subtitle">ou</p>
+            <button id="browse-button" class="button secondary" type="button">
+              Choisir des fichiers
+            </button>
+          </div>
+
+          <div id="file-empty" class="file-empty">Aucun fichier sélectionné.</div>
+          <ul id="file-list" class="file-list" aria-live="polite"></ul>
+        </section>
+
+        <section class="card" aria-labelledby="options-title">
+          <div class="card-heading">
+            <span class="step" aria-hidden="true">2</span>
+            <div>
+              <h2 id="options-title">Options</h2>
+              <p class="hint">Les bornes vides sont déduites des vols, comme avec la CLI.</p>
+            </div>
+          </div>
+
+          <div class="options-grid">
+            <label class="field">
+              <span class="field-label">Début de fenêtre</span>
+              <input
+                id="start"
+                name="start"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="2026-06-01T10:00:00Z"
+              />
+              <span class="field-help">Optionnel, ISO 8601 avec décalage horaire.</span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Fin de fenêtre</span>
+              <input
+                id="end"
+                name="end"
+                type="text"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="2026-06-01T10:00:30Z"
+              />
+              <span class="field-help">Optionnel, exclue, même format que le début.</span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Égalités au sommet</span>
+              <select id="tie" name="tie">
+                <option value="all" selected>Chacun marque un point</option>
+                <option value="split">Le point est partagé</option>
+              </select>
+              <span class="field-help">Quand plusieurs pilotes sont exactement au même niveau.</span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Trou maximal</span>
+              <span class="input-with-unit">
+                <input
+                  id="max-gap"
+                  name="max-gap"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value="5"
+                  inputmode="decimal"
+                />
+                <span class="unit">s</span>
+              </span>
+              <span class="field-help">Durée pendant laquelle la dernière altitude enregistrée reste valable.</span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Altitude utilisée</span>
+              <select id="altitude" name="altitude">
+                <option value="gps" selected>GPS (repli sur la pression)</option>
+                <option value="pressure">Pression (repli sur le GPS)</option>
+              </select>
+              <span class="field-help">La hauteur lue dans les enregistrements de vol.</span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Format de sortie</span>
+              <select id="output-format" name="output-format">
+                <option value="table" selected>Tableau texte</option>
+                <option value="json">JSON</option>
+                <option value="csv">CSV</option>
+              </select>
+              <span class="field-help">Le résultat peut être copié ou téléchargé.</span>
+            </label>
+          </div>
+
+          <label class="check-field">
+            <input id="timeline" type="checkbox" />
+            <span>
+              <strong>Inclure le détail seconde par seconde</strong>
+              <span class="field-help">Le leader de chaque seconde, uniquement dans l'export JSON.</span>
+            </span>
+          </label>
+
+          <details class="rules" open>
+            <summary>
+              <span class="rules-summary-title">Comment fonctionne le classement ?</span>
+              <span class="rules-summary-hint">Les règles du calcul, en clair</span>
+            </summary>
+            <div class="rules-grid">
+              <article class="rule-card">
+                <span class="rule-number" aria-hidden="true">1</span>
+                <div>
+                  <h3>Une seconde, un point</h3>
+                  <p>À chaque seconde, le pilote le plus haut marque un point.</p>
+                </div>
+              </article>
+              <article class="rule-card">
+                <span class="rule-number" aria-hidden="true">2</span>
+                <div>
+                  <h3>Dernière altitude connue</h3>
+                  <p>
+                    Un pilote garde sa dernière altitude enregistrée pendant le délai de
+                    tolérance. Au-delà, il est considéré comme hors couverture.
+                  </p>
+                </div>
+              </article>
+              <article class="rule-card">
+                <span class="rule-number" aria-hidden="true">3</span>
+                <div>
+                  <h3>Égalités au sommet</h3>
+                  <p>
+                    Quand plusieurs pilotes sont au même niveau, chacun marque un point
+                    ou le point est partagé.
+                  </p>
+                </div>
+              </article>
+            </div>
+          </details>
+        </section>
+
+        <div class="actions">
+          <button id="run-button" class="button primary" type="submit">
+            <span class="button-label">Calculer le classement</span>
+          </button>
+          <button id="reset-button" class="button ghost" type="button">Réinitialiser</button>
+        </div>
+      </form>
+
+      <div id="error" class="error" role="alert" hidden></div>
+
+      <section id="results" class="results" aria-labelledby="results-title" hidden>
+        <div class="results-heading">
+          <div>
+            <h2 id="results-title">Résultats</h2>
+            <p id="results-subtitle" class="hint"></p>
+          </div>
+          <div class="toolbar">
+            <button id="copy-button" class="button secondary small" type="button">Copier</button>
+            <button id="download-button" class="button secondary small" type="button">
+              Télécharger
+            </button>
+          </div>
+        </div>
+
+        <div class="summary-grid">
+          <article class="summary-card">
+            <span class="summary-label">Vainqueur</span>
+            <strong id="summary-leader" class="summary-value">—</strong>
+            <span id="summary-points" class="summary-detail"></span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Durée effective</span>
+            <strong id="summary-duration" class="summary-value">—</strong>
+            <span id="summary-window" class="summary-detail"></span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-label">Secondes à égalité</span>
+            <strong id="summary-tied" class="summary-value">—</strong>
+            <span id="summary-policy" class="summary-detail"></span>
+          </article>
+        </div>
+
+        <article class="ranking-card" aria-labelledby="ranking-title">
+          <div class="ranking-heading">
+            <h3 id="ranking-title">Classement</h3>
+            <span id="ranking-caption" class="ranking-caption"></span>
+          </div>
+          <div class="ranking-scroll">
+            <table id="ranking-table" class="ranking-table">
+              <caption class="visually-hidden">Classement des pilotes</caption>
+              <thead>
+                <tr>
+                  <th scope="col" class="ranking-rank">#</th>
+                  <th scope="col">Pilote</th>
+                  <th scope="col" class="ranking-points">Points</th>
+                  <th scope="col" class="ranking-share">Part du temps</th>
+                </tr>
+              </thead>
+              <tbody id="ranking-body"></tbody>
+            </table>
+          </div>
+          <p id="ranking-empty" class="ranking-empty" hidden>
+            Aucun pilote dans la fenêtre demandée.
+          </p>
+        </article>
+
+        <details id="raw-output" class="raw-output">
+          <summary>
+            <span class="raw-output-title">Sortie brute</span>
+            <span id="raw-format-label" class="raw-output-label">Tableau texte</span>
+          </summary>
+          <pre id="output" class="output" tabindex="0" aria-live="polite"></pre>
+        </details>
+        <p id="timeline-warning" class="hint" hidden>
+          Ce détail n'est disponible que dans l'export JSON.
+        </p>
+      </section>
+
+      <p class="privacy-note">
+        <strong>Vie privée :</strong> les traces sont lues et scorées localement par votre
+        navigateur. Aucune donnée n'est transmise à un serveur.
+      </p>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
